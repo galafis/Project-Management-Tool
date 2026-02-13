@@ -4,11 +4,8 @@ Project Management Tool
 Modern project management application with task tracking, team collaboration, and progress monitoring.
 """
 
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify
 import sqlite3
-import json
-from datetime import datetime, timedelta
-import uuid
 
 app = Flask(__name__)
 
@@ -113,7 +110,13 @@ class ProjectManager:
             'completion_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0
         }
 
-manager = ProjectManager()
+manager = None
+
+def get_manager():
+    global manager
+    if manager is None:
+        manager = ProjectManager()
+    return manager
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -140,6 +143,8 @@ HTML_TEMPLATE = """
         .status-active { color: #27ae60; font-weight: bold; }
         .status-completed { color: #3498db; font-weight: bold; }
         .status-planning { color: #f39c12; font-weight: bold; }
+        .status-todo { color: #95a5a6; font-weight: bold; }
+        .status-in_progress { color: #e67e22; font-weight: bold; }
         .priority-high { color: #e74c3c; font-weight: bold; }
         .priority-medium { color: #f39c12; font-weight: bold; }
         .priority-low { color: #27ae60; font-weight: bold; }
@@ -225,20 +230,49 @@ HTML_TEMPLATE = """
             }
         }
         
+        function esc(str) {
+            if (str == null) return '';
+            var d = document.createElement('div');
+            d.textContent = String(str);
+            return d.innerHTML;
+        }
+
         async function loadProjects() {
             try {
                 const response = await fetch('/api/projects');
                 const projects = await response.json();
-                
-                document.getElementById('projectsBody').innerHTML = projects.map(project => `
-                    <tr>
-                        <td><strong>${project[1]}</strong><br><small>${project[2]}</small></td>
-                        <td class="status-${project[3]}">${project[3].toUpperCase()}</td>
-                        <td>${project[6]}%</td>
-                        <td>${project[5] || 'No due date'}</td>
-                        <td><button class="btn" onclick="viewProject(${project[0]})">View</button></td>
-                    </tr>
-                `).join('');
+                const tbody = document.getElementById('projectsBody');
+                tbody.innerHTML = '';
+                projects.forEach(function(project) {
+                    const tr = document.createElement('tr');
+                    const tdName = document.createElement('td');
+                    const strong = document.createElement('strong');
+                    strong.textContent = project[1];
+                    const small = document.createElement('small');
+                    small.textContent = project[2];
+                    tdName.appendChild(strong);
+                    tdName.appendChild(document.createElement('br'));
+                    tdName.appendChild(small);
+                    const tdStatus = document.createElement('td');
+                    tdStatus.className = 'status-' + esc(project[3]);
+                    tdStatus.textContent = String(project[3]).toUpperCase();
+                    const tdProgress = document.createElement('td');
+                    tdProgress.textContent = project[6] + '%';
+                    const tdDue = document.createElement('td');
+                    tdDue.textContent = project[5] || 'No due date';
+                    const tdAction = document.createElement('td');
+                    const btn = document.createElement('button');
+                    btn.className = 'btn';
+                    btn.textContent = 'View';
+                    btn.addEventListener('click', function() { viewProject(project[0]); });
+                    tdAction.appendChild(btn);
+                    tr.appendChild(tdName);
+                    tr.appendChild(tdStatus);
+                    tr.appendChild(tdProgress);
+                    tr.appendChild(tdDue);
+                    tr.appendChild(tdAction);
+                    tbody.appendChild(tr);
+                });
             } catch (error) {
                 console.error('Error loading projects:', error);
             }
@@ -248,17 +282,38 @@ HTML_TEMPLATE = """
             try {
                 const response = await fetch('/api/tasks');
                 const tasks = await response.json();
-                
-                document.getElementById('tasksBody').innerHTML = tasks.map(task => `
-                    <tr>
-                        <td><strong>${task[2]}</strong><br><small>${task[3]}</small></td>
-                        <td>Project ${task[1]}</td>
-                        <td class="status-${task[4]}">${task[4].replace('_', ' ').toUpperCase()}</td>
-                        <td class="priority-${task[5]}">${task[5].toUpperCase()}</td>
-                        <td>${task[6] || 'Unassigned'}</td>
-                        <td>${task[8] || 'No due date'}</td>
-                    </tr>
-                `).join('');
+                const tbody = document.getElementById('tasksBody');
+                tbody.innerHTML = '';
+                tasks.forEach(function(task) {
+                    const tr = document.createElement('tr');
+                    const tdTitle = document.createElement('td');
+                    const strong = document.createElement('strong');
+                    strong.textContent = task[2];
+                    const small = document.createElement('small');
+                    small.textContent = task[3];
+                    tdTitle.appendChild(strong);
+                    tdTitle.appendChild(document.createElement('br'));
+                    tdTitle.appendChild(small);
+                    const tdProject = document.createElement('td');
+                    tdProject.textContent = 'Project ' + task[1];
+                    const tdStatus = document.createElement('td');
+                    tdStatus.className = 'status-' + esc(task[4]);
+                    tdStatus.textContent = String(task[4]).replace('_', ' ').toUpperCase();
+                    const tdPriority = document.createElement('td');
+                    tdPriority.className = 'priority-' + esc(task[5]);
+                    tdPriority.textContent = String(task[5]).toUpperCase();
+                    const tdAssigned = document.createElement('td');
+                    tdAssigned.textContent = task[6] || 'Unassigned';
+                    const tdDue = document.createElement('td');
+                    tdDue.textContent = task[8] || 'No due date';
+                    tr.appendChild(tdTitle);
+                    tr.appendChild(tdProject);
+                    tr.appendChild(tdStatus);
+                    tr.appendChild(tdPriority);
+                    tr.appendChild(tdAssigned);
+                    tr.appendChild(tdDue);
+                    tbody.appendChild(tr);
+                });
             } catch (error) {
                 console.error('Error loading tasks:', error);
             }
@@ -285,22 +340,23 @@ def index():
 
 @app.route('/api/dashboard')
 def get_dashboard():
-    return jsonify(manager.get_dashboard_data())
+    return jsonify(get_manager().get_dashboard_data())
 
 @app.route('/api/projects')
 def get_projects():
-    conn = sqlite3.connect(manager.db_path)
+    conn = sqlite3.connect(get_manager().db_path)
     projects = conn.execute("SELECT * FROM projects ORDER BY created_date DESC").fetchall()
     conn.close()
     return jsonify(projects)
 
 @app.route('/api/tasks')
 def get_tasks():
-    conn = sqlite3.connect(manager.db_path)
+    conn = sqlite3.connect(get_manager().db_path)
     tasks = conn.execute("SELECT * FROM tasks ORDER BY created_date DESC").fetchall()
     conn.close()
     return jsonify(tasks)
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    manager = ProjectManager()
+    app.run(debug=False, host='0.0.0.0', port=5000)
 
